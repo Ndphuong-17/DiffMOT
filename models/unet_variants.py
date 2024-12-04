@@ -4,7 +4,7 @@ from einops import rearrange, repeat
 import math
 from .components import MLP, TransAoA, ReUnet3PlusDownBlock, ReUnet3PlusDownBlock_Smaller
 from .ReUNet2Plus1 import ReUNet2Plus1 as ReUNet2Plus
-from .SimpleReUNet2Plus import SimpleReUNet2Plus
+from .SimpleReUNet2Plus1 import SimpleReUNet2Plus
 
 class ReUNet(nn.Module):
   def __init__(self, noise_dim = 4, num_layers = 1, hidden_size = 256, filters = [16, 64, 128, 256], mid = True):
