@@ -65,7 +65,7 @@ class DownTriangle1(nn.Module):
 import torch
 import torch.nn as nn
 
-class UpTriangle(nn.Module):
+class UpTriangle2(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
         super(UpTriangle, self).__init__()
 
@@ -95,7 +95,7 @@ class UpTriangle(nn.Module):
         return x_10, x_01
 
 
-class DownTriangle(nn.Module):
+class DownTriangle2(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
         super(DownTriangle, self).__init__()
 
@@ -128,6 +128,103 @@ class DownTriangle(nn.Module):
         return output
 
 
+import torch
+import torch.nn as nn
+
+class UpTriangle(nn.Module):
+    def __init__(self, in_features, out_features, num_layers=1):
+        super(UpTriangle, self).__init__()
+
+        self.up = TransAoA(
+            input_size=in_features,
+            output_size=out_features,
+            num_layers=num_layers,
+        )
+
+        self.down = TransAoA(
+            input_size=out_features,
+            output_size=in_features,
+            num_layers=num_layers,
+        )
+
+        self.mid = TransAoA(
+            input_size=in_features * 2,
+            output_size=in_features,
+            num_layers=num_layers,
+        )
+
+        # LayerNorm for stabilizing training
+        self.layer_norm = nn.LayerNorm(in_features)
+        
+        # Initialization for better convergence
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        # Xavier Initialization for weights
+        for m in self.modules():
+            if isinstance(m, (nn.Linear, nn.Conv2d)):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, input, ctx):
+        x_00 = input  # (batch_size, in_features)
+        x_10 = self.up(x_00, ctx)  # (batch_size, out_features)
+        x_10_down = self.down(x_10, ctx)  # (batch_size, in_features)
+        x_01 = self.mid(torch.cat([x_00, x_10_down], 1), ctx)  # (batch_size, in_features)
+
+        # Skip connection for better gradient flow
+        x_01 = x_01 + x_00
+
+        # Layer normalization
+        x_01 = self.layer_norm(x_01)
+
+        return x_10, x_01
+
+
+class DownTriangle(nn.Module):
+    def __init__(self, in_features, out_features, num_layers=1, num_nodes=3):
+        super(DownTriangle, self).__init__()
+
+        self.down = TransAoA(
+            input_size=in_features,
+            output_size=out_features,
+            num_layers=num_layers,
+        )
+
+        self.mid = TransAoA(
+            input_size=out_features * num_nodes,
+            output_size=out_features,
+            num_layers=num_layers,
+        )
+
+        # LayerNorm for stabilizing training
+        self.layer_norm = nn.LayerNorm(out_features)
+
+        # Initialization for better convergence
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Linear, nn.Conv2d)):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, input_up, input_down: list[torch.Tensor], ctx):
+        # input_up : (batch_size, out_features)
+        # input_down: list of (batch_size, in_features) with length == num_nodes
+
+        input_up_down = self.down(input_up, ctx)  # (batch_size, in_features)
+        input_down.append(input_up_down)
+
+        # Concatenate and pass through mid layer
+        output = self.mid(torch.cat(input_down, 1), ctx)  # (batch_size, in_features)
+
+        # Layer normalization
+        output = self.layer_norm(output)
+
+        return output
 
 
 
