@@ -69,7 +69,7 @@ class ReUNet2Plus(nn.Module):
                filters = [16, 64, 128, 256], 
                mid = True,
                L = 3,
-               deep_supervision=True
+               deep_supervision=False,
                ):
     super(ReUNet2Plus, self).__init__()
     self.noise_dim = noise_dim
