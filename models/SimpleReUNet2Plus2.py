@@ -2,67 +2,6 @@ import torch
 from torch import nn
 from models.components import MLP, TransAoA
 
-# class UpTriangle1(nn.Module):
-#     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
-#         super(UpTriangle1, self).__init__()
-
-#         # Define up, down, and mid layers
-#         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
-#         # self.down = TransAoA(input_size=out_features, output_size=in_features, num_layers=num_layers)
-#         self.mid = nn.Sequential(
-#             nn.Linear(in_features + out_features, in_features),  # Reduce concatenation size
-#             nn.BatchNorm1d(in_features),
-#             nn.ReLU(),
-#             nn.Dropout(dropout),
-#         )
-#         self.final_transform = TransAoA(input_size=in_features, output_size=in_features, num_layers=num_layers)
-
-#     def forward(self, input, ctx):
-#         x_00 = input                      # Input tensor (batch, in_features)
-#         x_10 = self.up(x_00, ctx)         # Upscale (batch, out_features)
-
-#         # Concatenate and transform
-#         x_mid = torch.cat([x_00, x_10], dim=1)  # Concatenate along feature dimension
-#         x_01 = self.mid(x_mid)                      # (batch, in_features)
-
-#         # Add skip connection
-#         x_01 = self.final_transform(x_01 + x_00, ctx)  # Add residual and process
-
-#         return x_10, x_01
-
-
-# class DownTriangle1(nn.Module):
-#     def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
-#         super(DownTriangle1, self).__init__()
-
-#         # Downscaling layer
-#         self.down = MLP(in_features=in_features, out_features=out_features)
-
-#         # Mid processing layer
-#         self.mid = nn.Sequential(
-#             nn.Linear(out_features * num_nodes, out_features),
-#             nn.BatchNorm1d(out_features),
-#             nn.ReLU(),
-#             nn.Dropout(dropout),
-#         )
-#         self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
-
-#     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
-#         # Downscale input_up (batch, out_features)
-#         input_up_down = self.down(input_up)
-
-#         # Append downscaled input to the list
-#         input_down.append(input_up_down)
-
-#         # Concatenate all inputs and process
-#         concatenated = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
-#         output = self.mid(concatenated)             # Aggregate inputs (batch, out_features)
-
-#         # Add final transformation
-#         output = self.final_transform(output + input_up_down, ctx)  # Add residual from last downscaled input
-
-#         return output
-    
 
 class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
