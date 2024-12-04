@@ -2,9 +2,9 @@ import torch
 from torch import nn
 from models.components import MLP, TransAoA
 
-class UpTriangle(nn.Module):
+class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers = 1):
-        super(UpTriangle, self).__init__()
+        super(UpTriangle1, self).__init__()
 
 
         self.up = TransAoA(
@@ -33,9 +33,9 @@ class UpTriangle(nn.Module):
 
         return x_10, x_01
     
-class DownTriangle(nn.Module):
+class DownTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers = 1, num_nodes = 3):
-        super(DownTriangle, self).__init__()
+        super(DownTriangle1, self).__init__()
         
         self.down = TransAoA(
             input_size = in_features,
@@ -60,6 +60,79 @@ class DownTriangle(nn.Module):
         output = self.mid(torch.cat(input_down, 1), ctx) # (16, 2^n)
 
         return output
+    
+
+import torch
+import torch.nn as nn
+
+class UpTriangle(nn.Module):
+    def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
+        super(UpTriangle, self).__init__()
+
+        # Define up, down, and mid layers
+        self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
+        self.down = TransAoA(input_size=out_features, output_size=in_features, num_layers=num_layers)
+        self.mid = nn.Sequential(
+            nn.Linear(in_features * 2, in_features),  # Reduce concatenation size
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.BatchNorm1d(in_features),
+        )
+        self.final_transform = TransAoA(input_size=in_features, output_size=in_features, num_layers=num_layers)
+
+    def forward(self, input, ctx):
+        x_00 = input                      # Input tensor (batch, in_features)
+        x_10 = self.up(x_00, ctx)         # Upscale (batch, out_features)
+        x_10_down = self.down(x_10, ctx)  # Downscale (batch, in_features)
+
+        # Concatenate and transform
+        x_mid = torch.cat([x_00, x_10_down], dim=1)  # Concatenate along feature dimension
+        x_01 = self.mid(x_mid)                      # (batch, in_features)
+
+        # Add skip connection
+        x_01 = self.final_transform(x_01 + x_00, ctx)  # Add residual and process
+
+        return x_10, x_01
+
+
+class DownTriangle(nn.Module):
+    def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
+        super(DownTriangle, self).__init__()
+
+        # Downscaling layer
+        self.down = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
+
+        # Mid processing layer
+        self.mid = nn.Sequential(
+            nn.Linear(out_features * num_nodes, out_features),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.BatchNorm1d(out_features),
+        )
+        self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
+
+    def forward(self, input_up, input_down: list[torch.Tensor], ctx):
+        # Downscale input_up (batch, out_features)
+        input_up_down = self.down(input_up, ctx)
+
+        # Append downscaled input to the list
+        input_down.append(input_up_down)
+
+        # Concatenate all inputs and process
+        concatenated = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
+        output = self.mid(concatenated)             # Aggregate inputs (batch, out_features)
+
+        # Add final transformation
+        output = self.final_transform(output + input_up_down, ctx)  # Add residual from last downscaled input
+
+        return output
+
+
+
+
+
+
+
     
 class ReUNet2Plus(nn.Module):
   def __init__(self, 
