@@ -9,12 +9,19 @@ class UpTriangle1(nn.Module):
         # Define up, down, and mid layers
         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
         self.down = TransAoA(input_size=out_features, output_size=in_features, num_layers=num_layers)
+        # self.mid = nn.Sequential(
+        #     nn.Linear(in_features * 2, in_features),  # Reduce concatenation size
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.BatchNorm1d(in_features),
+        # )
         self.mid = nn.Sequential(
-            nn.Linear(in_features * 2, in_features),  # Reduce concatenation size
+            nn.Linear(in_features * 2, in_features),
+            nn.BatchNorm1d(in_features),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.BatchNorm1d(in_features),
         )
+
         self.final_transform = MLP(in_features=in_features, out_features=in_features)
 
     def forward(self, input, ctx):
@@ -39,12 +46,19 @@ class DownTriangle1(nn.Module):
         # Downscaling layer
         self.down = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
 
+        # # Mid processing layer
+        # self.mid = nn.Sequential(
+        #     nn.Linear(out_features * num_nodes, out_features),
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.BatchNorm1d(out_features),
+        # )
         # Mid processing layer
         self.mid = nn.Sequential(
             nn.Linear(out_features * num_nodes, out_features),
+            nn.BatchNorm1d(out_features),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.BatchNorm1d(out_features),
         )
         self.final_transform = MLP(in_features=out_features, out_features=out_features)
 
