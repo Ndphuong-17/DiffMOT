@@ -11,9 +11,9 @@ class UpTriangle1(nn.Module):
         # self.down = TransAoA(input_size=out_features, output_size=in_features, num_layers=num_layers)
         self.mid = nn.Sequential(
             nn.Linear(in_features + out_features, in_features),  # Reduce concatenation size
+            nn.BatchNorm1d(in_features),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.BatchNorm1d(in_features),
         )
         self.final_transform = TransAoA(input_size=in_features, output_size=in_features, num_layers=num_layers)
 
@@ -41,9 +41,9 @@ class DownTriangle1(nn.Module):
         # Mid processing layer
         self.mid = nn.Sequential(
             nn.Linear(out_features * num_nodes, out_features),
+            nn.BatchNorm1d(out_features),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.BatchNorm1d(out_features),
         )
         self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
 
