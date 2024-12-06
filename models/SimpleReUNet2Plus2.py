@@ -7,8 +7,16 @@ class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
         super(UpTriangle1, self).__init__()
 
-        # Define up, down, and mid layers
-        self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
+        # # Define up, down, and mid layers
+        # self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
+
+        
+        # Mid processing layers
+        self.mid_linear1 = nn.Linear(in_features, out_features)  # Reduce concatenation size
+        self.mid_norm1 = nn.LayerNorm(out_features)
+        self.mid_attention1 = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
+
+        self.up = MLP(in_features = out_features, out_features = out_features)
 
         # Mid processing layers
         self.mid_linear = nn.Linear(in_features + out_features, in_features)  # Reduce concatenation size
@@ -21,7 +29,14 @@ class UpTriangle1(nn.Module):
 
     def forward(self, input, ctx):
         x_00 = input                      # Input tensor (batch, in_features)
-        x_10 = self.up(x_00, ctx)         # Upscale (batch, out_features)
+        x_mid = self.mid_linear1(input)
+        x_mid = self.mid_norm1(x_mid)
+        x_mid = self.mid_activation(x_mid)
+        x_mid = self.mid_dropout(x_mid)
+
+        # Apply attention
+        x_mid, _ = self.mid_attention1(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
+        x_10 = self.up(x_mid).squeeze(1)         # Upscale (batch, out_features)
 
         # Concatenate and transform
         x_mid = torch.cat([x_00, x_10], dim=1)  # Concatenate along feature dimension
@@ -42,31 +57,29 @@ class DownTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
         super(DownTriangle1, self).__init__()
 
-        # Downscaling layer
-        self.down = MLP(in_features=in_features, out_features=out_features)
-
         # Mid processing layers
-        self.mid_linear = nn.Linear(out_features * num_nodes, out_features)  # Reduce concatenation size
+        self.mid_linear = nn.Linear(in_features, out_features)  # Reduce concatenation size
         self.mid_norm = nn.LayerNorm(out_features)
+        self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)  # Reduce concatenation size
+        self.mid_norm1 = nn.LayerNorm(out_features)
         self.mid_activation = nn.ReLU()
         self.mid_dropout = nn.Dropout(dropout)
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
 
 
-        self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
+        self.final_transform = MLP(in_features=out_features, out_features=out_features)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
-        # Downscale input_up (batch, out_features)
-        input_up_down = self.down(input_up)
-
-        # Append downscaled input to the list
-        input_down.append(input_up_down)
-
-        # Concatenate all inputs and process
-        x_mid = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
         
-        x_mid = self.mid_linear(x_mid)
-        x_mid = self.mid_norm(x_mid)
+        input_up_down = self.mid_linear(input_up)
+        input_up_down = self.mid_norm(input_up_down)
+        input_up_down = self.mid_activation(input_up_down)
+        input_up_down = self.mid_dropout(input_up_down)
+
+        input_down.append(input_up_down)
+        x_mid = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
+        x_mid = self.mid_linear1(x_mid)
+        x_mid = self.mid_norm1(x_mid)
         x_mid = self.mid_activation(x_mid)
         x_mid = self.mid_dropout(x_mid)
 
@@ -74,7 +87,7 @@ class DownTriangle1(nn.Module):
         output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
 
         # Add final transformation
-        output = self.final_transform(output.squeeze(1) + input_up_down, ctx)  # Add residual from last downscaled input
+        output = self.final_transform(output.squeeze(1) + input_up_down)  # Add residual from last downscaled input
 
         return output
 
@@ -105,7 +118,7 @@ class SimpleReUNet2Plus(nn.Module):
   
   
     ## --- j = 0, UPSAMPLER ---
-    self.up_00 = TransAoA(input_size = 4, output_size = filters[0], num_layers = num_layers)
+    self.up_00 = MLP(in_features = 4, out_features = filters[0])
     self.up_00_10 = UpTriangle1(in_features=filters[0], out_features = filters[1], num_layers = num_layers)
     self.up_10_20 = UpTriangle1(in_features=filters[1], out_features = filters[2], num_layers = num_layers)
     self.up_20_30 = UpTriangle1(in_features=filters[2], out_features = filters[3], num_layers = num_layers)
@@ -132,7 +145,7 @@ class SimpleReUNet2Plus(nn.Module):
 
 
     ## --- L = 1 ---
-    x_00 = self.up_00(x, ctx_emb)  # (B, 16)
+    x_00 = self.up_00(x)  # (B, 16)
     x_10, x_01 = self.up_00_10(x_00, ctx_emb)  # (B, 64), (B, 16)
     output_01 = self.prediction(x_01)
 
