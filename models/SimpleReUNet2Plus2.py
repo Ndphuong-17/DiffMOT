@@ -46,7 +46,7 @@ class DownTriangle1(nn.Module):
         self.mid_dropout = nn.Dropout(dropout)
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
 
-        self.final_transform = MLP(in_features=out_features, out_features=out_features)
+        self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
         input_up_down = self.mid_norm(self.mid_linear(input_up))
@@ -64,7 +64,7 @@ class DownTriangle1(nn.Module):
         x_mid, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))
 
         # Add final transformation with stronger residuals
-        output = self.final_transform(x_mid.squeeze(1) + input_up_down)
+        output = self.final_transform(x_mid.squeeze(1) + input_up_down, ctx)
 
         return output
 
