@@ -1,98 +1,84 @@
 import torch
 from torch import nn
 from models.components import MLP, TransAoA
+from torch.utils.checkpoint import checkpoint
 
 
+    
 class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
         super(UpTriangle1, self).__init__()
-
-        # # Define up, down, and mid layers
-        # self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
-
-        
-        # Mid processing layers
-        self.mid_linear1 = nn.Linear(in_features, out_features)  # Reduce concatenation size
-        self.mid_norm1 = nn.LayerNorm(out_features)
+        self.mid_linear1 = nn.Linear(in_features, out_features)
+        self.mid_norm1 = nn.BatchNorm1d(out_features)  # Replace LayerNorm with BatchNorm
         self.mid_attention1 = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
+        self.up = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
 
-        self.up = MLP(in_features = out_features, out_features = out_features)
-
-        # Mid processing layers
-        self.mid_linear = nn.Linear(in_features + out_features, in_features)  # Reduce concatenation size
-        self.mid_norm = nn.LayerNorm(in_features)
-        self.mid_activation = nn.ReLU()
-        self.mid_dropout = nn.Dropout(dropout)
-        self.mid_attention = nn.MultiheadAttention(embed_dim=in_features, num_heads=4, batch_first=True)
-
-        self.final_transform = TransAoA(input_size=in_features, output_size=in_features, num_layers=num_layers)
+        self.final_transform = MLP(in_features=in_features + out_features, out_features=in_features)
 
     def forward(self, input, ctx):
-        x_00 = input                      # Input tensor (batch, in_features)
-        x_mid = self.mid_linear1(input)
+        x_mid = self.mid_linear1(input)  # Shape: [batch_size, features]
+        
+        # Apply BatchNorm1d across the feature dimension
         x_mid = self.mid_norm1(x_mid)
-        x_mid = self.mid_activation(x_mid)
-        x_mid = self.mid_dropout(x_mid)
+        
+        x_mid, _ = self.mid_attention1(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))
 
-        # Apply attention
-        x_mid, _ = self.mid_attention1(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
-        x_10 = self.up(x_mid).squeeze(1)         # Upscale (batch, out_features)
-
-        # Concatenate and transform
-        x_mid = torch.cat([x_00, x_10], dim=1)  # Concatenate along feature dimension
-        x_mid = self.mid_linear(x_mid)
-        x_mid = self.mid_norm(x_mid)
-        x_mid = self.mid_activation(x_mid)
-        x_mid = self.mid_dropout(x_mid)
-
-        # Apply attention
-        x_mid, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
-
-        # Add skip connection
-        x_01 = self.final_transform(x_mid.squeeze(1) + x_00, ctx)  # Add residual and process
+        x_10 = self.up(x_mid.squeeze(1), ctx)
+        
+        x_01 = self.final_transform(torch.cat([x_10, input], dim = 1))  # Add residual and process
 
         return x_10, x_01
+
+
 
 class DownTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
         super(DownTriangle1, self).__init__()
 
         # Mid processing layers
-        self.mid_linear = nn.Linear(in_features, out_features)  # Reduce concatenation size
+        self.mid_linear = nn.Linear(in_features, out_features)
         self.mid_norm = nn.LayerNorm(out_features)
       
-        self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)  # Reduce concatenation size
+        self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)
         self.mid_norm1 = nn.LayerNorm(out_features)
 
         self.mid_activation = nn.ReLU()
         self.mid_dropout = nn.Dropout(dropout)
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
 
-
         self.final_transform = MLP(in_features=out_features, out_features=out_features)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
-        
-        input_up_down = self.mid_linear(input_up)
-        input_up_down = self.mid_norm(input_up_down)
+        input_up_down = self.mid_norm(self.mid_linear(input_up))
         input_up_down = self.mid_activation(input_up_down)
         input_up_down = self.mid_dropout(input_up_down)
 
         input_down.append(input_up_down)
 
-        x_mid = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
-        x_mid = self.mid_linear1(x_mid)
-        x_mid = self.mid_norm1(x_mid)
+        x_mid = torch.cat(input_down, dim=1)
+        x_mid = self.mid_norm1(self.mid_linear1(x_mid))
         x_mid = self.mid_activation(x_mid)
         x_mid = self.mid_dropout(x_mid)
 
-        # Apply attention
-        output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
+        # Apply attention with checkpointing
+        x_mid, _ = checkpoint(self.mid_attention, x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))
 
-        # Add final transformation
-        output = self.final_transform(output.squeeze(1) + input_up_down)  # Add residual from last downscaled input
+        # Add final transformation with stronger residuals
+        output = self.final_transform(x_mid.squeeze(1) + input_up_down)
 
         return output
+
 
     
 class SimpleReUNet2Plus(nn.Module):
