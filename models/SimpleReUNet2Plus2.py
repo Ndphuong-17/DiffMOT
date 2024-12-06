@@ -60,8 +60,10 @@ class DownTriangle1(nn.Module):
         # Mid processing layers
         self.mid_linear = nn.Linear(in_features, out_features)  # Reduce concatenation size
         self.mid_norm = nn.LayerNorm(out_features)
+      
         self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)  # Reduce concatenation size
         self.mid_norm1 = nn.LayerNorm(out_features)
+
         self.mid_activation = nn.ReLU()
         self.mid_dropout = nn.Dropout(dropout)
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
@@ -77,6 +79,7 @@ class DownTriangle1(nn.Module):
         input_up_down = self.mid_dropout(input_up_down)
 
         input_down.append(input_up_down)
+
         x_mid = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
         x_mid = self.mid_linear1(x_mid)
         x_mid = self.mid_norm1(x_mid)
@@ -134,7 +137,7 @@ class SimpleReUNet2Plus(nn.Module):
     self.down_13 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4, num_layers = num_layers)
 
     ## --- j = 4, DOWNSAMPLER ---
-    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4, num_layers = num_layers)
+    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 5, num_layers = num_layers)
 
 
   def forward(self, x, beta, context):

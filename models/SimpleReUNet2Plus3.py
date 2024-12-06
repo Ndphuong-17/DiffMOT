@@ -120,7 +120,7 @@ class SimpleReUNet2Plus(nn.Module):
     self.down_13 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4, num_layers = num_layers)
 
     ## --- j = 4, DOWNSAMPLER ---
-    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4, num_layers = num_layers)
+    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 5, num_layers = num_layers)
 
 
   def forward(self, x, beta, context):
