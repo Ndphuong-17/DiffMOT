@@ -99,7 +99,7 @@ class SimpleReUNet2Plus(nn.Module):
                hidden_size = 256, 
                filters = [16, 64, 128, 256, 512, 1024, 2048, 4096], 
                mid = True,
-               L = 3,
+               L = 4,
                deep_supervision=False,
                ):
     super(SimpleReUNet2Plus, self).__init__()
