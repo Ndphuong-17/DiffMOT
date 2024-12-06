@@ -144,7 +144,7 @@ class SimpleReUNet2Plus(nn.Module):
     time_emb = torch.cat([beta, torch.sin(beta), torch.cos(beta)], dim=-1)  # (B, 3)
     ctx_emb = self.shared_ctx_mlp(torch.cat([time_emb, context], dim=-1).to(self.device)) # (B, 256)
 
-    if not (1 <= self.layers <= 3):
+    if not (1 <= self.layers <= 4):
         raise ValueError("the model pruning factor `L` should be 1 <= L <= 3")
 
 
