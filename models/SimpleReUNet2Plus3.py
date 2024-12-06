@@ -13,7 +13,7 @@ class UpTriangle1(nn.Module):
         # Mid processing layers
         self.mid_linear = nn.Linear(in_features + out_features, in_features)  # Reduce concatenation size
         self.mid_norm = nn.LayerNorm(in_features)
-        self.mid_activation = nn.ReLU()
+        self.mid_activation = nn.GELU()
         self.mid_dropout = nn.Dropout(dropout)
         self.mid_attention = nn.MultiheadAttention(embed_dim=in_features, num_heads=4, batch_first=True)
 
@@ -42,39 +42,31 @@ class DownTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
         super(DownTriangle1, self).__init__()
 
-        # Mid processing layers
-        self.mid_linear = nn.Linear(in_features, out_features)  # Reduce concatenation size
         self.mid_norm = nn.LayerNorm(out_features)
-        self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)  # Reduce concatenation size
-        self.mid_norm1 = nn.LayerNorm(out_features)
-        self.mid_activation = nn.ReLU()
+        self.mid_linear = nn.Linear(in_features, out_features)
+        self.mid_activation = nn.GELU()
         self.mid_dropout = nn.Dropout(dropout)
-        self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
-
+        self.attention_pooling = nn.Linear(out_features * num_nodes, out_features)
 
         self.final_transform = MLP(in_features=out_features, out_features=out_features)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
-        
         input_up_down = self.mid_linear(input_up)
         input_up_down = self.mid_norm(input_up_down)
         input_up_down = self.mid_activation(input_up_down)
         input_up_down = self.mid_dropout(input_up_down)
 
         input_down.append(input_up_down)
-        x_mid = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
-        x_mid = self.mid_linear1(x_mid)
-        x_mid = self.mid_norm1(x_mid)
-        x_mid = self.mid_activation(x_mid)
-        x_mid = self.mid_dropout(x_mid)
+        pooled = torch.cat(input_down, dim=1)  # Concatenate along feature dimension
+        pooled = self.attention_pooling(pooled)  # Attention-based pooling
 
-        # Apply attention
-        output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
+        pooled = self.mid_norm(pooled)
+        pooled = self.mid_activation(pooled)
+        pooled = self.mid_dropout(pooled)
 
-        # Add final transformation
-        output = self.final_transform(output.squeeze(1) + input_up_down)  # Add residual from last downscaled input
-
+        output = self.final_transform(pooled + input_up_down)  # Add skip connection
         return output
+
 
     
 class SimpleReUNet2Plus(nn.Module):
