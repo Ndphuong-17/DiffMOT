@@ -97,7 +97,7 @@ class SimpleReUNet2Plus(nn.Module):
                noise_dim = 4, 
                num_layers = 1, 
                hidden_size = 256, 
-               filters = [16, 64, 128, 256], 
+               filters = [16, 64, 128, 256, 512, 1024, 2048, 4096], 
                mid = True,
                L = 3,
                deep_supervision=False,
@@ -122,14 +122,19 @@ class SimpleReUNet2Plus(nn.Module):
     self.up_00_10 = UpTriangle1(in_features=filters[0], out_features = filters[1], num_layers = num_layers)
     self.up_10_20 = UpTriangle1(in_features=filters[1], out_features = filters[2], num_layers = num_layers)
     self.up_20_30 = UpTriangle1(in_features=filters[2], out_features = filters[3], num_layers = num_layers)
+    self.up_30_40 = UpTriangle1(in_features=filters[3], out_features = filters[4], num_layers = num_layers)
 
     ## --- j = 2, DOWNSAMPLER ---
     self.down_02 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 3, num_layers = num_layers)
     self.down_12 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 3, num_layers = num_layers)
+    self.down_22 = DownTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 3, num_layers = num_layers)
     
     ## --- j = 3, DOWNSAMPLER ---
     self.down_03 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4, num_layers = num_layers)
+    self.down_13 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4, num_layers = num_layers)
 
+    ## --- j = 4, DOWNSAMPLER ---
+    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4, num_layers = num_layers)
 
 
   def forward(self, x, beta, context):
@@ -138,7 +143,6 @@ class SimpleReUNet2Plus(nn.Module):
     context = context.view(batch_size, -1)   # (B, F)
     time_emb = torch.cat([beta, torch.sin(beta), torch.cos(beta)], dim=-1)  # (B, 3)
     ctx_emb = self.shared_ctx_mlp(torch.cat([time_emb, context], dim=-1).to(self.device)) # (B, 256)
-    input = x # 16, 4
 
     if not (1 <= self.layers <= 3):
         raise ValueError("the model pruning factor `L` should be 1 <= L <= 3")
@@ -173,6 +177,18 @@ class SimpleReUNet2Plus(nn.Module):
       return (output_03 + output_02 + output_01)/3
     elif self.layers == 3:
       return output_03
+    
+    # --- L = 4 ---
+    x_40, x_31 = self.up_30_40(x_30, ctx_emb)  # (B, 512), (B, 256)
+    x_22 = self.down_22(x_31, [x_20, x_21], ctx_emb)  # (B, 128)
+    x_13 = self.down_13(x_22, [x_10, x_11, x_12], ctx_emb)  # (B, 64)
+    x_04 = self.down_04(x_13, [x_00, x_01, x_02, x_03], ctx_emb)  # (B, 16)
+    output_04 = self.prediction(x_04)
+
+    if self.layers == 4:
+        return (output_04 + output_03 + output_02 + output_01) / 4 if self.deep_supervision else output_04
+
+    
 
 
 if __name__ == '__main__':
