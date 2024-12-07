@@ -6,42 +6,18 @@ from models.components import MLP, TransAoA
 
 
 class UpTriangle1(nn.Module):
-    def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
+    def __init__(self, in_features, out_features, num_layers=1):
         super(UpTriangle1, self).__init__()
-
         # Define up, down, and mid layers
         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
 
-        # # Mid processing layers
-        # self.mid_linear = nn.Linear(in_features + out_features, in_features)  # Reduce concatenation size
-        # self.mid_norm = nn.LayerNorm(in_features)
-        # self.mid_activation = nn.ReLU()
-        # self.mid_dropout = nn.Dropout(dropout)
-        # self.mid_attention = nn.MultiheadAttention(embed_dim=in_features, num_heads=4, batch_first=True)
-
-        # self.final_transform = TransAoA(input_size=in_features, output_size=in_features, num_layers=num_layers)
-
     def forward(self, input, ctx):
-        x_00 = input                      # Input tensor (batch, in_features)
-        x_10 = self.up(x_00, ctx)         # Upscale (batch, out_features)
-
-        # # Concatenate and transform
-        # x_mid = torch.cat([x_00, x_10], dim=1)  # Concatenate along feature dimension
-        # x_mid = self.mid_linear(x_mid)
-        # x_mid = self.mid_norm(x_mid)
-        # x_mid = self.mid_activation(x_mid)
-        # x_mid = self.mid_dropout(x_mid)
-
-        # # Apply attention
-        # x_mid, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
-
-        # # Add skip connection
-        # x_01 = self.final_transform(x_mid.squeeze(1) + x_00, ctx)  # Add residual and process
-
+        x_10 = self.up(input, ctx)         # Upscale (batch, out_features)
         return x_10
-class DownTriangle1(nn.Module):
-    def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
-        super(DownTriangle1, self).__init__()
+    
+class MidTriangle1(nn.Module):
+    def __init__(self, in_features, out_features, num_nodes=3, dropout=0.1):
+        super(MidTriangle1, self).__init__()
 
         # Mid processing layers
         self.mid_linear = nn.Linear(in_features, out_features)  # Reduce concatenation size
@@ -51,9 +27,6 @@ class DownTriangle1(nn.Module):
         self.mid_activation = nn.ReLU()
         self.mid_dropout = nn.Dropout(dropout)
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
-
-
-        self.final_transform = MLP(in_features=out_features, out_features=out_features)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
         
@@ -72,8 +45,19 @@ class DownTriangle1(nn.Module):
         # Apply attention
         output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
 
+        # # Add final transformation
+        # output = self.final_transform(output.squeeze(1) + input_up_down, ctx)  # Add residual from last downscaled input
+
+        return output.squeeze(1) + input_up_down
+   
+class DownTriangle1(nn.Module):
+    def __init__(self, out_features, num_layers=1):
+        super(DownTriangle1, self).__init__()
+
+        self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
+    def forward(self, mid, ctx):
         # Add final transformation
-        output = self.final_transform(output.squeeze(1) + input_up_down)  # Add residual from last downscaled input
+        output = self.final_transform(mid, ctx)  # Add residual from last downscaled input
 
         return output
 
@@ -112,23 +96,29 @@ class SimpleReUNet2Plus(nn.Module):
     self.up_20_30 = UpTriangle1(in_features=filters[2], out_features = filters[3], num_layers = num_layers)
     self.up_30_40 = UpTriangle1(in_features=filters[3], out_features = filters[4], num_layers = num_layers)
 
-    ## --- j = 2, DOWNSAMPLER ---
-    self.down_01 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 2, num_layers = num_layers)
-    self.down_11 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 2, num_layers = num_layers)
-    self.down_21 = DownTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 2, num_layers = num_layers)
-    self.down_31 = DownTriangle1(in_features=filters[4], out_features = filters[3], num_nodes = 2, num_layers = num_layers)
 
     ## --- j = 2, DOWNSAMPLER ---
-    self.down_02 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 3, num_layers = num_layers)
-    self.down_12 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 3, num_layers = num_layers)
-    self.down_22 = DownTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 3, num_layers = num_layers)
+    self.down_01 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 2)
+    self.down_11 = MidTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 2)
+    self.down_21 = MidTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 2)
+    self.down_31 = MidTriangle1(in_features=filters[4], out_features = filters[3], num_nodes = 2)
+
+    self.down_0 = DownTriangle1(out_features = filters[0], num_layers = num_layers)
+    self.down_1 = DownTriangle1(out_features = filters[1], num_layers = num_layers)
+    self.down_2 = DownTriangle1(out_features = filters[2], num_layers = num_layers)
+    self.down_3 = DownTriangle1(out_features = filters[3], num_layers = num_layers)
+
+    ## --- j = 2, DOWNSAMPLER ---
+    self.down_02 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 3)
+    self.down_12 = MidTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 3)
+    self.down_22 = MidTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 3)
     
     ## --- j = 3, DOWNSAMPLER ---
-    self.down_03 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4, num_layers = num_layers)
-    self.down_13 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4, num_layers = num_layers)
+    self.down_03 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4)
+    self.down_13 = MidTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4)
 
     ## --- j = 4, DOWNSAMPLER ---
-    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 5, num_layers = num_layers)
+    self.down_04 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 5)
 
 
   def forward(self, x, beta, context):
@@ -145,7 +135,8 @@ class SimpleReUNet2Plus(nn.Module):
     ## --- L = 1 ---
     x_00 = self.up_00(x)  # (B, 16)
     x_10 = self.up_00_10(x_00, ctx_emb)  # (B, 64)
-    x_01 = self.down_01(x_10, [x_00], ctx_emb) # (B,16)
+    mid = self.down_01(x_10, [x_00], ctx_emb) # (B,16)
+    x_01 = self.down_0(mid, ctx_emb) # (B,16)
     output_01 = self.prediction(x_01)
 
     if self.layers == 1:
@@ -154,7 +145,9 @@ class SimpleReUNet2Plus(nn.Module):
     ## --- L = 2 ---
     x_20 = self.up_10_20(x_10, ctx_emb)  # (B, 128)
     x_11 = self.down_11(x_20, [x_10], ctx_emb) # (B, 64)
+    x_11 = self.down_1(x_11, ctx_emb) # (B, 64)
     x_02 = self.down_02(x_11, [x_00, x_01], ctx_emb) # (B, 16)
+    x_02 = self.down_0(x_02, ctx_emb) # (B, 16)
     output_02 = self.prediction(x_02)
 
     if self.layers == 2 and self.deep_supervision:
@@ -166,8 +159,11 @@ class SimpleReUNet2Plus(nn.Module):
     ## --- L = 3 ---
     x_30 = self.up_20_30(x_20, ctx_emb)  # (B, 256)
     x_21 = self.down_21(x_30, [x_20], ctx_emb) # (B, 128)
+    x_21 = self.down_2(x_21, ctx_emb) # (B, 128)
     x_12 = self.down_12(x_21, [x_10, x_11], ctx_emb) # (B, 64)
+    x_12 = self.down_1(x_12, ctx_emb) # (B, 64)
     x_03 = self.down_03(x_12, [x_00, x_01, x_02], ctx_emb) # (B, 16)
+    x_03 = self.down_0(x_03, ctx_emb) # (B, 16)
     output_03 = self.prediction(x_03)
     
     if self.layers == 3 and self.deep_supervision:
@@ -178,9 +174,13 @@ class SimpleReUNet2Plus(nn.Module):
     # --- L = 4 ---
     x_40 = self.up_30_40(x_30, ctx_emb)  # (B, 512)
     x_31 = self.down_31(x_40, [x_30], ctx_emb)  # (B, 256)
+    x_31 = self.down_3(x_31, ctx_emb)  # (B, 256)
     x_22 = self.down_22(x_31, [x_20, x_21], ctx_emb)  # (B, 128)
+    x_22 = self.down_2(x_22, ctx_emb)  # (B, 128)
     x_13 = self.down_13(x_22, [x_10, x_11, x_12], ctx_emb)  # (B, 64)
+    x_13 = self.down_1(x_13, ctx_emb)  # (B, 64)
     x_04 = self.down_04(x_13, [x_00, x_01, x_02, x_03], ctx_emb)  # (B, 16)
+    x_04 = self.down_0(x_04, ctx_emb)  # (B, 16)
     output_04 = self.prediction(x_04)
 
     if self.layers == 4:
