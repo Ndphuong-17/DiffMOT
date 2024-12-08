@@ -51,7 +51,7 @@ class MidTriangle1(nn.Module):
         attn_output = attn_output.squeeze(1)
 
         # Combine with input_up_down
-        output = attn_output #+ input_up_down
+        output = attn_output + input_up_down
 
         return output
    
