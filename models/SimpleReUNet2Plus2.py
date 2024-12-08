@@ -59,137 +59,111 @@ class DownTriangle1(nn.Module):
     def __init__(self, out_features, num_layers=1):
         super(DownTriangle1, self).__init__()
 
-        self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
+        self.final_transform = MLP(in_features=out_features, out_features=out_features)
     def forward(self, mid, ctx):
         # Add final transformation
-        output = self.final_transform(mid, ctx)  # Add residual from last downscaled input
+        output = self.final_transform(mid)  # Add residual from last downscaled input
 
         return output
 
 
-    
 
 class SimpleReUNet2Plus(nn.Module):
-  def __init__(self, 
-               noise_dim = 4, 
-               num_layers = 1, 
-               hidden_size = 256, 
-               filters = [16, 64, 128, 256, 512, 1024, 2048, 4096], 
-               mid = True,
-               L = 4,
-               deep_supervision=False,
-               ):
-    super(SimpleReUNet2Plus, self).__init__()
-    self.noise_dim = noise_dim
-    self.num_layers = num_layers
-    self.filters = filters
-    self.reversed_filters = filters[::-1]
-    self.shared_ctx_mlp = MLP(in_features = hidden_size + 3,
-                              out_features = hidden_size)
-    self.prediction = MLP(in_features = self.filters[0],
-                          out_features = noise_dim)
+    def __init__(self, 
+                 noise_dim=4, 
+                 num_layers=1, 
+                 hidden_size=256, 
+                 filters=None, 
+                 L=4,
+                 deep_supervision=False):
+        super(SimpleReUNet2Plus, self).__init__()
+        if filters is None:
+            filters = [16, 64, 128, 256, 512, 1024, 2048, 4096]
+        if not (1 <= L <= len(filters)):
+            raise ValueError(f"`L` must be between 1 and {len(filters)}.")
+        
+        self.noise_dim = noise_dim
+        self.num_layers = num_layers
+        self.filters = filters
+        self.L = L
+        self.deep_supervision = deep_supervision
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.shared_ctx_mlp = MLP(in_features=hidden_size + 3, out_features=hidden_size)
+        self.prediction = MLP(in_features=filters[0], out_features=noise_dim)
+
+        # Define upsampling and downsampling layers
+        self.up_layers = nn.ModuleList([
+            TransAoA(input_size=(4 if i == 0 else filters[i - 1]), 
+                     output_size=filters[i], 
+                     num_layers=num_layers)
+            for i in range(L+1)
+        ])
+        
+        self.down_mid_layers = nn.ModuleList([
+            MidTriangle1(in_features=filters[i+1], 
+                         out_features=filters[i], 
+                         num_nodes=j + 1)
+            for j in range(1, L+1) for i in range(0, L-j+1)
+        ])
+        
+        # self.down_layers = nn.ModuleList([
+        #     DownTriangle1(out_features=filters[i], num_layers=num_layers)
+        #     for i in range(L)
+        # ])
     
-    self.layers = L
-    self.deep_supervision = deep_supervision
-    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  
-  
-    ## --- j = 0, UPSAMPLER ---
-    self.up_00 = TransAoA(input_size=4, output_size=filters[0], num_layers=num_layers)#MLP(in_features = 4, out_features = filters[0])
-    self.up_00_10 = UpTriangle1(in_features=filters[0], out_features = filters[1], num_layers = num_layers)
-    self.up_10_20 = UpTriangle1(in_features=filters[1], out_features = filters[2], num_layers = num_layers)
-    self.up_20_30 = UpTriangle1(in_features=filters[2], out_features = filters[3], num_layers = num_layers)
-    self.up_30_40 = UpTriangle1(in_features=filters[3], out_features = filters[4], num_layers = num_layers)
-
-
-    ## --- j = 2, DOWNSAMPLER ---
-    self.down_01 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 2)
-    self.down_11 = MidTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 2)
-    self.down_21 = MidTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 2)
-    self.down_31 = MidTriangle1(in_features=filters[4], out_features = filters[3], num_nodes = 2)
-
-    self.down_0 = DownTriangle1(out_features = filters[0], num_layers = num_layers)
-    self.down_1 = DownTriangle1(out_features = filters[1], num_layers = num_layers)
-    self.down_2 = DownTriangle1(out_features = filters[2], num_layers = num_layers)
-    self.down_3 = DownTriangle1(out_features = filters[3], num_layers = num_layers)
-
-    ## --- j = 2, DOWNSAMPLER ---
-    self.down_02 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 3)
-    self.down_12 = MidTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 3)
-    self.down_22 = MidTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 3)
+        self.down_layers = nn.ModuleList([
+            MLP(in_features=filters[i], out_features=filters[i])
+            for i in range(L)
+        ])
     
-    ## --- j = 3, DOWNSAMPLER ---
-    self.down_03 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4)
-    self.down_13 = MidTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4)
+    def forward(self, x, beta, context):
+        batch_size = x.size(0)
+        beta = beta.view(batch_size, 1)  # (B, 1)
+        context = context.view(batch_size, -1)  # (B, F)
+        time_emb = torch.cat([beta, torch.sin(beta), torch.cos(beta)], dim=-1)  # (B, 3)
+        ctx_emb = self.shared_ctx_mlp(torch.cat([time_emb, context], dim=-1).to(self.device))  # (B, 256)
 
-    ## --- j = 4, DOWNSAMPLER ---
-    self.down_04 = MidTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 5)
+        # --- Upsampling ---
+        up_outputs = []
+        current_x = x
+        for i, up_layer in enumerate(self.up_layers):
+            current_x = up_layer(current_x, ctx_emb)
+            up_outputs.append(current_x)
 
+        # --- Downsampling ---
+        inputs = []
+        for j in range(self.L):
+          current_x = self.down_mid_layers[j](up_outputs[j+1], [up_outputs[j]], ctx_emb)
+          current_x = self.down_layers[j](current_x)
+          inputs.append([up_outputs[j], current_x])
+            
+            
+        key = self.L
+        for j in range(self.L - 1, 0, -1): # 2, 1
+            for i in range(j):
+              # print("i: ", i)
+              # print("j: ", j)
+              # print("filters[i]: ", self.filters[i])
+              # print("key: ", key)
+              # print(f"inputs[i]: {len(inputs[i])}, {inputs[i][0].shape}")
+              # print(f"inputs[i+1]: {len(inputs[i+1])}, {inputs[i+1][-1].shape}")
+              # print(self.down_mid_layers[key])
+              current_x = self.down_mid_layers[key](inputs[i+1][-1], inputs[i], ctx_emb)
+              # print("current_x: ", current_x.shape)
+              # print(self.down_layers[i])
+              current_x = self.down_layers[i](current_x)
+              inputs[i][-1] = current_x
+              # print(f"inputs[{i}]: {len(inputs[i])}")
+              key += 1
+              # print("================================================================")
 
-  def forward(self, x, beta, context):
-    batch_size = x.size(0)
-    beta = beta.view(batch_size, 1) # (B, 1)
-    context = context.view(batch_size, -1)   # (B, F)
-    time_emb = torch.cat([beta, torch.sin(beta), torch.cos(beta)], dim=-1)  # (B, 3)
-    ctx_emb = self.shared_ctx_mlp(torch.cat([time_emb, context], dim=-1).to(self.device)) # (B, 256)
+        # --- Final Output ---
+        # predictions = [self.prediction(down) for down in down_outputs[::-1]]
+        # if self.deep_supervision:
+        #     return sum(predictions) / len(predictions)
+        return self.prediction(inputs[0][-1])
 
-    if not (1 <= self.layers <= 4):
-        raise ValueError("the model pruning factor `L` should be 1 <= L <= 3")
-
-
-    ## --- L = 1 ---
-    x_00 = self.up_00(x, ctx_emb)  # (B, 16)
-    x_10 = self.up_00_10(x_00, ctx_emb)  # (B, 64)
-    mid = self.down_01(x_10, [x_00], ctx_emb) # (B,16)
-    x_01 = self.down_0(mid, ctx_emb) # (B,16)
-    output_01 = self.prediction(x_01)
-
-    if self.layers == 1:
-      return output_01
-    
-    ## --- L = 2 ---
-    x_20 = self.up_10_20(x_10, ctx_emb)  # (B, 128)
-    x_11 = self.down_11(x_20, [x_10], ctx_emb) # (B, 64)
-    x_11 = self.down_1(x_11, ctx_emb) # (B, 64)
-    x_02 = self.down_02(x_11, [x_00, x_01], ctx_emb) # (B, 16)
-    x_02 = self.down_0(x_02, ctx_emb) # (B, 16)
-    output_02 = self.prediction(x_02)
-
-    if self.layers == 2 and self.deep_supervision:
-      return (output_02 + output_01)/2
-    elif self.layers == 2:
-      return output_02
-    
-    
-    ## --- L = 3 ---
-    x_30 = self.up_20_30(x_20, ctx_emb)  # (B, 256)
-    x_21 = self.down_21(x_30, [x_20], ctx_emb) # (B, 128)
-    x_21 = self.down_2(x_21, ctx_emb) # (B, 128)
-    x_12 = self.down_12(x_21, [x_10, x_11], ctx_emb) # (B, 64)
-    x_12 = self.down_1(x_12, ctx_emb) # (B, 64)
-    x_03 = self.down_03(x_12, [x_00, x_01, x_02], ctx_emb) # (B, 16)
-    x_03 = self.down_0(x_03, ctx_emb) # (B, 16)
-    output_03 = self.prediction(x_03)
-    
-    if self.layers == 3 and self.deep_supervision:
-      return (output_03 + output_02 + output_01)/3
-    elif self.layers == 3:
-      return output_03
-    
-    # --- L = 4 ---
-    x_40 = self.up_30_40(x_30, ctx_emb)  # (B, 512)
-    x_31 = self.down_31(x_40, [x_30], ctx_emb)  # (B, 256)
-    x_31 = self.down_3(x_31, ctx_emb)  # (B, 256)
-    x_22 = self.down_22(x_31, [x_20, x_21], ctx_emb)  # (B, 128)
-    x_22 = self.down_2(x_22, ctx_emb)  # (B, 128)
-    x_13 = self.down_13(x_22, [x_10, x_11, x_12], ctx_emb)  # (B, 64)
-    x_13 = self.down_1(x_13, ctx_emb)  # (B, 64)
-    x_04 = self.down_04(x_13, [x_00, x_01, x_02, x_03], ctx_emb)  # (B, 16)
-    x_04 = self.down_0(x_04, ctx_emb)  # (B, 16)
-    output_04 = self.prediction(x_04)
-
-    if self.layers == 4:
-        return (output_04 + output_03 + output_02 + output_01) / 4 if self.deep_supervision else output_04
 
     
 
