@@ -27,9 +27,8 @@ class MidTriangle1(nn.Module):
         self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)
         self.mid_norm1 = nn.LayerNorm(out_features)
         self.mid_activation1 = nn.ReLU()
-        self.mid_dropout = nn.Dropout(dropout)
 
-        # self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
+        self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
         # Process input_up
@@ -43,33 +42,41 @@ class MidTriangle1(nn.Module):
         x_mid = torch.cat(input_down, dim=1)
         x_mid = self.mid_linear1(x_mid)
         x_mid = self.mid_norm1(x_mid)
-        # x_mid = self.mid_activation(x_mid)
-        # x_mid = self.mid_dropout(x_mid)
+        x_mid = self.mid_activation1(x_mid)
+        x_mid = self.mid_dropout(x_mid)
 
-        # # Apply attention
-        # attn_output, _ = self.mid_attention(
-        #     x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1)
-        # )
-        # attn_output = attn_output.squeeze(1)
-
-        # # Combine with input_up_down
-        # x_mid = attn_output + input_up_down
+        # Apply attention
+        attn_output, _ = self.mid_attention(
+            x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1)
+        )
+        x_mid = attn_output.squeeze(1)
         
         x_mid = self.mid_activation1(x_mid)
         x_mid = self.mid_dropout(x_mid)
 
+        # Combine with input_up_down
+        x_mid = x_mid + input_up_down
+
         return x_mid
    
 class DownTriangle1(nn.Module):
-    def __init__(self, out_features, num_layers=1):
+    def __init__(self, out_features, num_layers=1, dropout=0.1):
         super(DownTriangle1, self).__init__()
 
-        self.final_transform = MLP(in_features=out_features, out_features=out_features)
+        # self.final_transform = MLP(in_features=out_features, out_features=out_features)
+        self.final_transform = TransAoA(input_size=out_features, 
+                                        output_size=out_features, 
+                                        num_layers=num_layers)
+
+        # self.mid_activation1 = nn.ReLU()
+        # self.mid_dropout = nn.Dropout(dropout)
     def forward(self, mid, ctx):
         # Add final transformation
-        output = self.final_transform(mid)  # Add residual from last downscaled input
+        x_mid = self.final_transform(mid, ctx)  # Add residual from last downscaled input
+        # x_mid = self.mid_activation1(x_mid)
+        # x_mid = self.mid_dropout(x_mid)
 
-        return output
+        return x_mid
 
 
 
