@@ -29,7 +29,7 @@ class MidTriangle1(nn.Module):
         self.mid_activation1 = nn.ReLU()
         self.mid_dropout = nn.Dropout(dropout)
 
-        self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
+        # self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
         # Process input_up
@@ -43,17 +43,17 @@ class MidTriangle1(nn.Module):
         x_mid = torch.cat(input_down, dim=1)
         x_mid = self.mid_linear1(x_mid)
         x_mid = self.mid_norm1(x_mid)
-        x_mid = self.mid_activation(x_mid)
-        x_mid = self.mid_dropout(x_mid)
+        # x_mid = self.mid_activation(x_mid)
+        # x_mid = self.mid_dropout(x_mid)
 
-        # Apply attention
-        attn_output, _ = self.mid_attention(
-            x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1)
-        )
-        attn_output = attn_output.squeeze(1)
+        # # Apply attention
+        # attn_output, _ = self.mid_attention(
+        #     x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1)
+        # )
+        # attn_output = attn_output.squeeze(1)
 
-        # Combine with input_up_down
-        x_mid = attn_output + input_up_down
+        # # Combine with input_up_down
+        # x_mid = attn_output + input_up_down
         
         x_mid = self.mid_activation1(x_mid)
         x_mid = self.mid_dropout(x_mid)
