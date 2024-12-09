@@ -26,8 +26,12 @@ class MidTriangle1(nn.Module):
 
         self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)
         self.mid_norm1 = nn.LayerNorm(out_features)
+        self.mid_activation = nn.GELU()
+        self.mid_dropout = nn.Dropout(dropout)
 
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
+        self.mid_activation = nn.ReLU()
+        self.mid_dropout = nn.Dropout(dropout)
 
     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
         # Process input_up
@@ -107,15 +111,15 @@ class SimpleReUNet2Plus(nn.Module):
             for j in range(1, L+1) for i in range(0, L-j+1)
         ])
         
-        # self.down_layers = nn.ModuleList([
-        #     DownTriangle1(out_features=filters[i], num_layers=num_layers)
-        #     for i in range(L)
-        # ])
-    
         self.down_layers = nn.ModuleList([
-            MLP(in_features=filters[i], out_features=filters[i])
+            DownTriangle1(out_features=filters[i], num_layers=num_layers)
             for i in range(L)
         ])
+    
+        # self.down_layers = nn.ModuleList([
+        #     MLP(in_features=filters[i], out_features=filters[i])
+        #     for i in range(L)
+        # ])
     
     def forward(self, x, beta, context):
         batch_size = x.size(0)
@@ -135,28 +139,17 @@ class SimpleReUNet2Plus(nn.Module):
         inputs = []
         for j in range(self.L):
           current_x = self.down_mid_layers[j](up_outputs[j+1], [up_outputs[j]], ctx_emb)
-          current_x = self.down_layers[j](current_x)
+          current_x = self.down_layers[j](current_x, ctx_emb)
           inputs.append([up_outputs[j], current_x])
             
             
         key = self.L
         for j in range(self.L - 1, 0, -1): # 2, 1
             for i in range(j):
-              # print("i: ", i)
-              # print("j: ", j)
-              # print("filters[i]: ", self.filters[i])
-              # print("key: ", key)
-              # print(f"inputs[i]: {len(inputs[i])}, {inputs[i][0].shape}")
-              # print(f"inputs[i+1]: {len(inputs[i+1])}, {inputs[i+1][-1].shape}")
-              # print(self.down_mid_layers[key])
               current_x = self.down_mid_layers[key](inputs[i+1][-1], inputs[i], ctx_emb)
-              # print("current_x: ", current_x.shape)
-              # print(self.down_layers[i])
-              current_x = self.down_layers[i](current_x)
+              current_x = self.down_layers[i](current_x, ctx_emb)
               inputs[i][-1] = current_x
-              # print(f"inputs[{i}]: {len(inputs[i])}")
               key += 1
-              # print("================================================================")
 
         # --- Final Output ---
         # predictions = [self.prediction(down) for down in down_outputs[::-1]]
