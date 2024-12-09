@@ -90,7 +90,7 @@ class MidTriangle1(nn.Module):
         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=num_heads, batch_first=True)
         self.feedforward = nn.Sequential(
             nn.Linear(out_features, out_features * 2),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(out_features * 2, out_features)
         )
@@ -144,7 +144,7 @@ class DownTriangle1(nn.Module):
         self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
         self.norm = nn.LayerNorm(out_features)
         self.dropout = nn.Dropout(dropout)
-        self.activation = nn.GELU()
+        self.activation = nn.ReLU()
 
     def forward(self, mid, ctx):
         x_mid = self.final_transform(mid, ctx)
