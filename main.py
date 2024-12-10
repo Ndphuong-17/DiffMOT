@@ -37,7 +37,6 @@ def main():
 
     agent = DiffMOT(config)
     
-    agent.half()  # Convert all parameters and buffers to Half
 
     with torch.amp.autocast("cuda"):  # Updated from torch.cuda.amp.autocast
         if config.eval_mode:
