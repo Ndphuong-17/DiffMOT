@@ -2,6 +2,7 @@
 from diffmot import DiffMOT
 import argparse
 import yaml
+import torch
 from easydict import EasyDict
 
 def parse_args():
@@ -35,11 +36,14 @@ def main():
         config.network = args.network
 
     agent = DiffMOT(config)
+    
+    agent.half()  # Convert all parameters and buffers to Half
 
-    if config.eval_mode:
-        agent.eval()
-    else:
-        agent.train()
+    with torch.amp.autocast("cuda"):  # Updated from torch.cuda.amp.autocast
+        if config.eval_mode:
+            agent.eval()
+        else:
+            agent.train()
 
 if __name__ == '__main__':
     main()

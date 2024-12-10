@@ -85,55 +85,98 @@ class FusedLinear(nn.Module):
     def forward(self, x):
         return self.dropout(self.activation(self.linear(x)))
 
+class Bottleneck(nn.Module):
+    def __init__(self, in_features, out_features):
+        super(Bottleneck, self).__init__()
+        hidden_features = in_features*2
+        self.linear = nn.Linear(in_features, hidden_features)
+        self.activation = nn.ReLU()
+        self.out = nn.Linear(hidden_features, out_features)
+
+    def forward(self, x):
+        return self.out(self.activation(self.linear(x)))
+    
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, dim):
+        super(ScaledDotProductAttention, self).__init__()
+        self.scale = dim ** -0.5
+
+    def forward(self, query, key, value):
+        scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
+        attention = scores.softmax(dim=-1)
+        return torch.matmul(attention, value)
+class SharedWeightLayer(nn.Module):
+    def __init__(self, shared_linear):
+        super(SharedWeightLayer, self).__init__()
+        self.shared_linear = shared_linear
+
+    def forward(self, x):
+        return self.shared_linear(x)
+    
+
+class GLUFeedforward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0.1):
+        super(GLUFeedforward, self).__init__()
+        self.fc1 = nn.Linear(in_features = dim, out_features = hidden_dim)
+        self.gate = nn.Linear(in_features = dim, out_features = hidden_dim)
+        self.fc2 = nn.Linear(in_features = hidden_dim, out_features = dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        gate_output = self.gate(x)
+        fc1_output = self.fc1(x)
+        combined_output = torch.sigmoid(gate_output) * fc1_output
+        final_output = self.fc2(self.dropout(combined_output))
+
+
+        return final_output
+
+
+
 
 class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
         super(UpTriangle1, self).__init__()
         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
-        self.postprocess = nn.Sequential(
-            nn.LayerNorm(out_features),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
+        self.norm = nn.LayerNorm(out_features)
+        self.activation = nn.ReLU(inplace=True)  # Inplace activation
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, input, ctx):
-        with torch.cuda.amp.autocast():  # Enable mixed precision
+        with torch.no_grad():  # For inference optimization
             x_up = self.up(input, ctx)
-            return self.postprocess(x_up)
+        return self.dropout(self.activation(self.norm(x_up)))
 
 
 class MidTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_nodes=3, dropout=0.1, num_heads=4):
         super(MidTriangle1, self).__init__()
-        self.fused_linear = FusedLinear(in_features, out_features, dropout)
-        self.mid_linear1 = FusedLinear(out_features * num_nodes, out_features, dropout)
+        self.mid_linear = FusedLinear(in_features, out_features, dropout)
+        self.bottleneck = Bottleneck(out_features * num_nodes, out_features)
 
-        # Replace MultiheadAttention with FlashAttention or Linformer
-        self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=num_heads, batch_first=True)
+        # Lightweight attention
+        self.mid_attention = ScaledDotProductAttention(out_features)
 
-        self.feedforward = nn.Sequential(
-            nn.Linear(out_features, out_features * 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features * 2, out_features)
-        )
-        self.feedforward_norm = nn.LayerNorm(out_features)
+        self.feedforward = GLUFeedforward(dim = out_features, hidden_dim= out_features * 2, dropout= dropout)
+        self.norm = nn.LayerNorm(out_features)
 
     def forward(self, input_up, input_down, ctx):
-        with torch.cuda.amp.autocast():  # Enable mixed precision
-            # Preallocate buffer for concatenation
-            input_up_down = self.fused_linear(input_up)
-            input_down.append(input_up_down)
+        x_mid_up = self.mid_linear(input_up)
+        
+        input_down.append(x_mid_up)
+        
+        x_concat = torch.cat(input_down, dim=1)
+        
+        x_mid = self.bottleneck(x_concat)
 
-            x_mid = torch.cat(input_down, dim=1)
-            x_mid = self.mid_linear1(x_mid)
+        attn_output = self.mid_attention(x_mid, x_mid, x_mid)
 
-            attn_output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))
-            x_mid = attn_output.squeeze(1)
+        x_mid = self.feedforward(attn_output + x_mid)
 
-            # Feedforward layer with residual connection
-            x_mid = self.feedforward_norm(self.feedforward(x_mid) + x_mid)
-            return x_mid + input_up_down
+        result = self.norm(x_mid + x_mid_up)
+        
+        return result
+
 
 
 class DownTriangle1(nn.Module):
@@ -142,14 +185,15 @@ class DownTriangle1(nn.Module):
         self.final_transform = MLP(in_features=out_features, out_features=out_features)
         self.postprocess = nn.Sequential(
             nn.LayerNorm(out_features),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Dropout(dropout)
         )
 
     def forward(self, mid, ctx):
-        with torch.cuda.amp.autocast():  # Enable mixed precision
+        with torch.cuda.amp.autocast():  # Mixed precision
             x_mid = self.final_transform(mid)
-            return self.postprocess(x_mid)
+        return self.postprocess(x_mid)
+
 
 
 class SimpleReUNet2Plus(nn.Module):
