@@ -190,8 +190,8 @@ class DownTriangle1(nn.Module):
         )
 
     def forward(self, mid, ctx):
-        with torch.cuda.amp.autocast():  # Mixed precision
-            x_mid = self.final_transform(mid)
+        
+        x_mid = self.final_transform(mid)
         return self.postprocess(x_mid)
 
 
