@@ -2,7 +2,7 @@ import torch
 import os.path as osp
 
 class EarlyStopping:
-    def __init__(self, patience=5, delta=0):
+    def __init__(self, patience=5, delta=0.0):
         self.patience = patience
         self.delta = delta
         self.best_score = None
@@ -15,7 +15,13 @@ class EarlyStopping:
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(model, epoch, optimizer, scheduler, model_dir, dataset)
-        elif score < self.best_score + self.delta:
+        elif score > (self.best_score + self.delta) and score < 0.01:
+            self.counter += 1
+            print(f"Validation loss did not improve. Counter: {self.counter}/{self.patience}")
+            self.save_checkpoint(model, epoch, optimizer, scheduler, model_dir, dataset)
+            if self.counter >= self.patience:
+                self.early_stop = True
+        elif score < (self.best_score + self.delta) and score > 0.01:
             self.counter += 1
             print(f"Validation loss did not improve. Counter: {self.counter}/{self.patience}")
             self.save_checkpoint(model, epoch, optimizer, scheduler, model_dir, dataset)
