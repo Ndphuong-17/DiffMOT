@@ -3,284 +3,176 @@ from torch import nn
 from models.components import MLP, TransAoA
 
 
-
-    
-# class UpTriangle1(nn.Module):
-#     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
-#         super(UpTriangle1, self).__init__()
-#         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
-#         self.postprocess = nn.Sequential(
-#             nn.LayerNorm(out_features),
-#             nn.ReLU(),
-#             nn.Dropout(dropout)
-#         )
-
-#     def forward(self, input, ctx):
-#         x_up = self.up(input, ctx)
-#         x_up = self.postprocess(x_up)
-#         return x_up
-
-
-# class MidTriangle1(nn.Module):
-#     def __init__(self, in_features, out_features, num_nodes=3, dropout=0.1, num_heads=4):
-#         super(MidTriangle1, self).__init__()
-#         self.mid_linear = nn.Linear(in_features, out_features)
-#         self.post_linear = nn.Sequential(
-#             nn.LayerNorm(out_features),
-#             nn.ReLU(),
-#             nn.Dropout(dropout)
-#         )
-
-#         self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)
-#         self.post_linear1 = nn.Sequential(
-#             nn.LayerNorm(out_features),
-#             nn.ReLU()
-#         )
-
-#         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=num_heads, batch_first=True)
-#         self.feedforward = nn.Sequential(
-#             nn.Linear(out_features, out_features * 2),
-#             nn.ReLU(),
-#             nn.Dropout(dropout),
-#             nn.Linear(out_features * 2, out_features)
-#         )
-#         self.feedforward_norm = nn.LayerNorm(out_features)
-
-#     def forward(self, input_up, input_down, ctx):
-#         input_up_down = self.post_linear(self.mid_linear(input_up))
-#         input_down.append(input_up_down)
-#         x_mid = torch.cat(input_down, dim=1)
-#         x_mid = self.post_linear1(self.mid_linear1(x_mid))
-
-#         attn_output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))
-#         x_mid = attn_output.squeeze(1)
-
-#         x_mid = self.feedforward_norm(self.feedforward(x_mid) + x_mid)
-#         return x_mid + input_up_down
-
-
-
-# class DownTriangle1(nn.Module):
-#     def __init__(self, out_features, num_layers=1, dropout=0.1):
-#         super(DownTriangle1, self).__init__()
-#         self.final_transform = MLP(in_features=out_features, out_features=out_features)
-#         self.postprocess = nn.Sequential(
-#             nn.LayerNorm(out_features),
-#             nn.ReLU(),
-#             nn.Dropout(dropout)
-#         )
-
-#     def forward(self, mid, ctx):
-#         x_mid = self.final_transform(mid)
-#         x_mid = self.postprocess(x_mid)
-#         return x_mid
-
-class FusedLinear(nn.Module):
-    def __init__(self, in_features, out_features, dropout=0.1):
-        super(FusedLinear, self).__init__()
-        self.linear = nn.Linear(in_features, out_features)
-        self.activation = nn.ReLU()
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        return self.dropout(self.activation(self.linear(x)))
-
-class Bottleneck(nn.Module):
-    def __init__(self, in_features, out_features):
-        super(Bottleneck, self).__init__()
-        hidden_features = in_features*2
-        self.linear = nn.Linear(in_features, hidden_features)
-        self.activation = nn.ReLU()
-        self.out = nn.Linear(hidden_features, out_features)
-
-    def forward(self, x):
-        return self.out(self.activation(self.linear(x)))
-    
-class ScaledDotProductAttention(nn.Module):
-    def __init__(self, dim):
-        super(ScaledDotProductAttention, self).__init__()
-        self.scale = dim ** -0.5
-
-    def forward(self, query, key, value):
-        scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
-        attention = scores.softmax(dim=-1)
-        return torch.matmul(attention, value)
-class SharedWeightLayer(nn.Module):
-    def __init__(self, shared_linear):
-        super(SharedWeightLayer, self).__init__()
-        self.shared_linear = shared_linear
-
-    def forward(self, x):
-        return self.shared_linear(x)
-    
-
-class GLUFeedforward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout=0.1):
-        super(GLUFeedforward, self).__init__()
-        self.fc1 = nn.Linear(in_features = dim, out_features = hidden_dim)
-        self.gate = nn.Linear(in_features = dim, out_features = hidden_dim)
-        self.fc2 = nn.Linear(in_features = hidden_dim, out_features = dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        gate_output = self.gate(x)
-        fc1_output = self.fc1(x)
-        combined_output = torch.sigmoid(gate_output) * fc1_output
-        final_output = self.fc2(self.dropout(combined_output))
-
-
-        return final_output
-
-
-
-
 class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
         super(UpTriangle1, self).__init__()
+
+        # Define up, down, and mid layers
         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
-        self.norm = nn.LayerNorm(out_features)
-        self.activation = nn.ReLU(inplace=True)  # Inplace activation
-        self.dropout = nn.Dropout(dropout)
+
+        # Mid processing layers
+        self.mid_linear = nn.Linear(in_features + out_features, in_features)  # Reduce concatenation size
+        self.mid_norm = nn.LayerNorm(in_features)
+        self.mid_activation = nn.ReLU()
+        self.mid_dropout = nn.Dropout(dropout)
+        self.mid_attention = nn.MultiheadAttention(embed_dim=in_features, num_heads=4, batch_first=True)
+
+        self.final_transform = TransAoA(input_size=in_features, output_size=in_features, num_layers=num_layers)
 
     def forward(self, input, ctx):
-        with torch.no_grad():  # For inference optimization
-            x_up = self.up(input, ctx)
-        return self.dropout(self.activation(self.norm(x_up)))
+        x_00 = input                      # Input tensor (batch, in_features)
+        x_10 = self.up(x_00, ctx)         # Upscale (batch, out_features)
 
+        # Concatenate and transform
+        x_mid = torch.cat([x_00, x_10], dim=1)  # Concatenate along feature dimension
+        x_mid = self.mid_linear(x_mid)
+        x_mid = self.mid_norm(x_mid)
+        x_mid = self.mid_activation(x_mid)
+        x_mid = self.mid_dropout(x_mid)
 
-class MidTriangle1(nn.Module):
-    def __init__(self, in_features, out_features, num_nodes=3, dropout=0.1, num_heads=4):
-        super(MidTriangle1, self).__init__()
-        self.mid_linear = FusedLinear(in_features, out_features, dropout)
-        self.bottleneck = Bottleneck(out_features * num_nodes, out_features)
+        # Apply attention
+        x_mid, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
 
-        # Lightweight attention
-        self.mid_attention = ScaledDotProductAttention(out_features)
+        # Add skip connection
+        x_01 = self.final_transform(x_mid.squeeze(1) + x_00, ctx)  # Add residual and process
 
-        self.feedforward = GLUFeedforward(dim = out_features, hidden_dim= out_features * 2, dropout= dropout)
-        self.norm = nn.LayerNorm(out_features)
-
-    def forward(self, input_up, input_down, ctx):
-        x_mid_up = self.mid_linear(input_up)
-        
-        input_down.append(x_mid_up)
-        
-        x_concat = torch.cat(input_down, dim=1)
-        
-        x_mid = self.bottleneck(x_concat)
-
-        attn_output = self.mid_attention(x_mid, x_mid, x_mid)
-
-        x_mid = self.feedforward(attn_output + x_mid)
-
-        result = self.norm(x_mid + x_mid_up)
-        
-        return result
-
-
+        return x_10, x_01
 
 class DownTriangle1(nn.Module):
-    def __init__(self, out_features, dropout=0.1):
+    def __init__(self, in_features, out_features, num_layers=1, num_nodes=3, dropout=0.1):
         super(DownTriangle1, self).__init__()
+
+        # Mid processing layers
+        self.mid_linear = nn.Linear(in_features, out_features)  # Reduce concatenation size
+        self.mid_norm = nn.LayerNorm(out_features)
+        self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)  # Reduce concatenation size
+        self.mid_norm1 = nn.LayerNorm(out_features)
+        self.mid_activation = nn.ReLU()
+        self.mid_dropout = nn.Dropout(dropout)
+        self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
+
+
         self.final_transform = MLP(in_features=out_features, out_features=out_features)
-        self.postprocess = nn.Sequential(
-            nn.LayerNorm(out_features),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout)
-        )
 
-    def forward(self, mid, ctx):
+    def forward(self, input_up, input_down: list[torch.Tensor], ctx):
         
-        x_mid = self.final_transform(mid)
-        return self.postprocess(x_mid)
+        input_up_down = self.mid_linear(input_up)
+        input_up_down = self.mid_norm(input_up_down)
+        input_up_down = self.mid_activation(input_up_down)
+        input_up_down = self.mid_dropout(input_up_down)
 
+        input_down.append(input_up_down)
+        x_mid = torch.cat(input_down, dim=1)  # Concatenate list of tensors along feature dimension
+        x_mid = self.mid_linear1(x_mid)
+        x_mid = self.mid_norm1(x_mid)
+        x_mid = self.mid_activation(x_mid)
+        x_mid = self.mid_dropout(x_mid)
 
+        # Apply attention
+        output, _ = self.mid_attention(x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1))  # MultiheadAttention
+
+        # Add final transformation
+        output = self.final_transform(output.squeeze(1) + input_up_down)  # Add residual from last downscaled input
+
+        return output
+
+    
 
 class SimpleReUNet2Plus(nn.Module):
-    def __init__(self, 
-                 noise_dim=4, 
-                 num_layers=1, 
-                 hidden_size=256, 
-                 filters=None, 
-                 L=4,
-                 deep_supervision=False):
-        super(SimpleReUNet2Plus, self).__init__()
-        if filters is None:
-            filters = [16, 64, 128, 256, 512, 1024, 2048, 4096]
-        if not (1 <= L <= len(filters)):
-            raise ValueError(f"`L` must be between 1 and {len(filters)}.")
-        
-        self.noise_dim = noise_dim
-        self.num_layers = num_layers
-        self.filters = filters
-        self.L = L
-        self.deep_supervision = deep_supervision
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        self.shared_ctx_mlp = MLP(in_features=hidden_size + 3, out_features=hidden_size)
-        self.prediction = MLP(in_features=filters[0], out_features=noise_dim)
-
-        # Define upsampling and downsampling layers
-        self.up_layers = nn.ModuleList([
-            TransAoA(input_size=(4 if i == 0 else filters[i - 1]), 
-                     output_size=filters[i], 
-                     num_layers=num_layers)
-            for i in range(L+1)
-        ])
-        
-        self.down_mid_layers = nn.ModuleList([
-            MidTriangle1(in_features=filters[i+1], 
-                         out_features=filters[i], 
-                         num_nodes=j + 1)
-            for j in range(1, L+1) for i in range(0, L-j+1)
-        ])
-        
-        self.down_layers = nn.ModuleList([
-            DownTriangle1(out_features=filters[i])
-            for i in range(L)
-        ])
+  def __init__(self, 
+               noise_dim = 4, 
+               num_layers = 1, 
+               hidden_size = 256, 
+               filters = [16, 64, 128, 256, 512, 1024, 2048, 4096], 
+               mid = True,
+               L = 4,
+               deep_supervision=False,
+               ):
+    super(SimpleReUNet2Plus, self).__init__()
+    self.noise_dim = noise_dim
+    self.num_layers = num_layers
+    self.filters = filters
+    self.reversed_filters = filters[::-1]
+    self.shared_ctx_mlp = MLP(in_features = hidden_size + 3,
+                              out_features = hidden_size)
+    self.prediction = MLP(in_features = self.filters[0],
+                          out_features = noise_dim)
     
-        # self.down_layers = nn.ModuleList([
-        #     MLP(in_features=filters[i], out_features=filters[i])
-        #     for i in range(L)
-        # ])
+    self.layers = L
+    self.deep_supervision = deep_supervision
+    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  
+  
+    ## --- j = 0, UPSAMPLER ---
+    self.up_00 = MLP(in_features = 4, out_features = filters[0])
+    self.up_00_10 = UpTriangle1(in_features=filters[0], out_features = filters[1], num_layers = num_layers)
+    self.up_10_20 = UpTriangle1(in_features=filters[1], out_features = filters[2], num_layers = num_layers)
+    self.up_20_30 = UpTriangle1(in_features=filters[2], out_features = filters[3], num_layers = num_layers)
+    self.up_30_40 = UpTriangle1(in_features=filters[3], out_features = filters[4], num_layers = num_layers)
+
+    ## --- j = 2, DOWNSAMPLER ---
+    self.down_02 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 3, num_layers = num_layers)
+    self.down_12 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 3, num_layers = num_layers)
+    self.down_22 = DownTriangle1(in_features=filters[3], out_features = filters[2], num_nodes = 3, num_layers = num_layers)
     
-    def forward(self, x, beta, context):
-        batch_size = x.size(0)
-        beta = beta.view(batch_size, 1)  # (B, 1)
-        context = context.view(batch_size, -1)  # (B, F)
-        time_emb = torch.cat([beta, torch.sin(beta), torch.cos(beta)], dim=-1)  # (B, 3)
-        ctx_emb = self.shared_ctx_mlp(torch.cat([time_emb, context], dim=-1).to(self.device))  # (B, 256)
+    ## --- j = 3, DOWNSAMPLER ---
+    self.down_03 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 4, num_layers = num_layers)
+    self.down_13 = DownTriangle1(in_features=filters[2], out_features = filters[1], num_nodes = 4, num_layers = num_layers)
 
-        # --- Upsampling ---
-        up_outputs = []
-        current_x = x
-        for i, up_layer in enumerate(self.up_layers):
-            current_x = up_layer(current_x, ctx_emb)
-            up_outputs.append(current_x)
+    ## --- j = 4, DOWNSAMPLER ---
+    self.down_04 = DownTriangle1(in_features=filters[1], out_features = filters[0], num_nodes = 5, num_layers = num_layers)
 
-        # --- Downsampling ---
-        inputs = []
-        for j in range(self.L):
-          current_x = self.down_mid_layers[j](up_outputs[j+1], [up_outputs[j]], ctx_emb)
-          current_x = self.down_layers[j](current_x, ctx_emb)
-          inputs.append([up_outputs[j], current_x])
-            
-            
-        key = self.L
-        for j in range(self.L - 1, 0, -1): # 2, 1
-            for i in range(j):
-              current_x = self.down_mid_layers[key](inputs[i+1][-1], inputs[i], ctx_emb)
-              current_x = self.down_layers[i](current_x, ctx_emb)
-              inputs[i][-1] = current_x
-              key += 1
 
-        # --- Final Output ---
-        # predictions = [self.prediction(down) for down in down_outputs[::-1]]
-        # if self.deep_supervision:
-        #     return sum(predictions) / len(predictions)
-        return self.prediction(inputs[0][-1])
+  def forward(self, x, beta, context):
+    batch_size = x.size(0)
+    beta = beta.view(batch_size, 1) # (B, 1)
+    context = context.view(batch_size, -1)   # (B, F)
+    time_emb = torch.cat([beta, torch.sin(beta), torch.cos(beta)], dim=-1)  # (B, 3)
+    ctx_emb = self.shared_ctx_mlp(torch.cat([time_emb, context], dim=-1).to(self.device)) # (B, 256)
 
+    if not (1 <= self.layers <= 4):
+        raise ValueError("the model pruning factor `L` should be 1 <= L <= 3")
+
+
+    ## --- L = 1 ---
+    x_00 = self.up_00(x)  # (B, 16)
+    x_10, x_01 = self.up_00_10(x_00, ctx_emb)  # (B, 64), (B, 16)
+    output_01 = self.prediction(x_01)
+
+    if self.layers == 1:
+      return output_01
+    
+    ## --- L = 2 ---
+    x_20, x_11 = self.up_10_20(x_10, ctx_emb)  # (B, 128), (B, 64)
+    x_02 = self.down_02(x_11, [x_00, x_01], ctx_emb) # (B, 16)
+    output_02 = self.prediction(x_02)
+
+    if self.layers == 2 and self.deep_supervision:
+      return (output_02 + output_01)/2
+    elif self.layers == 2:
+      return output_02
+    
+    
+    ## --- L = 3 ---
+    x_30, x_21 = self.up_20_30(x_20, ctx_emb)  # (B, 256), (B, 128)
+    x_12 = self.down_12(x_21, [x_10, x_11], ctx_emb) # (B, 64)
+    x_03 = self.down_03(x_12, [x_00, x_01, x_02], ctx_emb) # (B, 16)
+    output_03 = self.prediction(x_03)
+    
+    if self.layers == 3 and self.deep_supervision:
+      return (output_03 + output_02 + output_01)/3
+    elif self.layers == 3:
+      return output_03
+    
+    # --- L = 4 ---
+    x_40, x_31 = self.up_30_40(x_30, ctx_emb)  # (B, 512), (B, 256)
+    x_22 = self.down_22(x_31, [x_20, x_21], ctx_emb)  # (B, 128)
+    x_13 = self.down_13(x_22, [x_10, x_11, x_12], ctx_emb)  # (B, 64)
+    x_04 = self.down_04(x_13, [x_00, x_01, x_02, x_03], ctx_emb)  # (B, 16)
+    output_04 = self.prediction(x_04)
+
+    if self.layers == 4:
+        return (output_04 + output_03 + output_02 + output_01) / 4 if self.deep_supervision else output_04
 
     
 
