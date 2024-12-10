@@ -4,7 +4,7 @@ eval_mode: False
 #eval_mode: True
 
 # early_stopping
-patience: 10
+patience: 100
 delta : 0
 
 # optimizer
