@@ -4,16 +4,6 @@ from models.components import MLP, TransAoA
 
 
 
-
-# class UpTriangle1(nn.Module):
-#     def __init__(self, in_features, out_features, num_layers=1):
-#         super(UpTriangle1, self).__init__()
-#         # Define up, down, and mid layers
-#         self.up = TransAoA(input_size=in_features, output_size=out_features, num_layers=num_layers)
-
-#     def forward(self, input, ctx):
-#         x_10 = self.up(input, ctx)         # Upscale (batch, out_features)
-#         return x_10
     
 class UpTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_layers=1, dropout=0.1):
@@ -30,50 +20,6 @@ class UpTriangle1(nn.Module):
         x_up = self.dropout(x_up)
         return x_up
 
-    
-# class MidTriangle1(nn.Module):
-#     def __init__(self, in_features, out_features, num_nodes=3, dropout=0.1):
-#         super(MidTriangle1, self).__init__()
-
-#         self.mid_linear = nn.Linear(in_features, out_features)
-#         self.mid_norm = nn.LayerNorm(out_features)
-#         self.mid_activation = nn.GELU()
-#         self.mid_dropout = nn.Dropout(dropout)
-
-#         self.mid_linear1 = nn.Linear(out_features * num_nodes, out_features)
-#         self.mid_norm1 = nn.LayerNorm(out_features)
-#         self.mid_activation1 = nn.ReLU()
-
-#         self.mid_attention = nn.MultiheadAttention(embed_dim=out_features, num_heads=4, batch_first=True)
-
-#     def forward(self, input_up, input_down: list[torch.Tensor], ctx):
-#         # Process input_up
-#         input_up_down = self.mid_linear(input_up)
-#         input_up_down = self.mid_norm(input_up_down)
-#         input_up_down = self.mid_activation(input_up_down)
-#         input_up_down = self.mid_dropout(input_up_down)
-
-#         # Concatenate with input_down
-#         input_down.append(input_up_down)
-#         x_mid = torch.cat(input_down, dim=1)
-#         x_mid = self.mid_linear1(x_mid)
-#         x_mid = self.mid_norm1(x_mid)
-#         x_mid = self.mid_activation1(x_mid)
-#         x_mid = self.mid_dropout(x_mid)
-
-#         # Apply attention
-#         attn_output, _ = self.mid_attention(
-#             x_mid.unsqueeze(1), x_mid.unsqueeze(1), x_mid.unsqueeze(1)
-#         )
-#         x_mid = attn_output.squeeze(1)
-        
-#         x_mid = self.mid_activation1(x_mid)
-#         x_mid = self.mid_dropout(x_mid)
-
-#         # Combine with input_up_down
-#         x_mid = x_mid + input_up_down
-
-#         return x_mid
 class MidTriangle1(nn.Module):
     def __init__(self, in_features, out_features, num_nodes=3, dropout=0.1, num_heads=4):
         super(MidTriangle1, self).__init__()
@@ -118,36 +64,19 @@ class MidTriangle1(nn.Module):
         x_mid = x_mid + input_up_down
         return x_mid
 
-   
-# class DownTriangle1(nn.Module):
-#     def __init__(self, out_features, num_layers=1, dropout=0.1):
-#         super(DownTriangle1, self).__init__()
 
-#         # self.final_transform = MLP(in_features=out_features, out_features=out_features)
-#         self.final_transform = TransAoA(input_size=out_features, 
-#                                         output_size=out_features, 
-#                                         num_layers=num_layers)
-
-#         # self.mid_activation1 = nn.ReLU()
-#         # self.mid_dropout = nn.Dropout(dropout)
-#     def forward(self, mid, ctx):
-#         # Add final transformation
-#         x_mid = self.final_transform(mid, ctx)  # Add residual from last downscaled input
-#         # x_mid = self.mid_activation1(x_mid)
-#         # x_mid = self.mid_dropout(x_mid)
-
-#         return x_mid
 
 class DownTriangle1(nn.Module):
     def __init__(self, out_features, num_layers=1, dropout=0.1):
         super(DownTriangle1, self).__init__()
-        self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
+        # self.final_transform = TransAoA(input_size=out_features, output_size=out_features, num_layers=num_layers)
+        self.final_transform = MLP(in_features=out_features, out_features=out_features)
         self.norm = nn.LayerNorm(out_features)
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.ReLU()
 
     def forward(self, mid, ctx):
-        x_mid = self.final_transform(mid, ctx)
+        x_mid = self.final_transform(mid)
         x_mid = self.norm(x_mid)
         x_mid = self.activation(x_mid)
         x_mid = self.dropout(x_mid)
