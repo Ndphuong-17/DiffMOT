@@ -2,7 +2,7 @@ import torch
 import os.path as osp
 
 class EarlyStopping:
-    def __init__(self, patience=5, delta=0.0, mode='min'):
+    def __init__(self, patience=5, delta=0.0, mode='loss'):
         self.patience = patience
         self.delta = delta
         self.best_score = None
@@ -10,9 +10,9 @@ class EarlyStopping:
         self.counter = 0
 
         if mode == 'loss':
-            mode = 'min'
+            self.mode = 'min'
         else:
-            mode = 'max'
+            self.mode = 'max'
 
     def __call__(self, val_loss, model, epoch, optimizer, scheduler, model_dir, dataset):
         score = -val_loss
