@@ -15,13 +15,13 @@ class EarlyStopping:
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(model, epoch, optimizer, scheduler, model_dir, dataset)
-        elif score > (self.best_score + self.delta) and score <= 0.1:
+        elif score > (self.best_score) and score <= 0.1:
             self.counter += 1
             print(f"Validation loss did not improve. Counter: {self.counter}/{self.patience}")
             self.save_checkpoint(model, epoch, optimizer, scheduler, model_dir, dataset)
             if self.counter >= self.patience:
                 self.early_stop = True
-        elif score < (self.best_score - self.delta) and score > 0.1:
+        elif score < (self.best_score) and score > 0.1:
             self.counter += 1
             print(f"Validation IoU did not improve. Counter: {self.counter}/{self.patience}")
             self.save_checkpoint(model, epoch, optimizer, scheduler, model_dir, dataset)
