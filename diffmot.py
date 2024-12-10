@@ -125,11 +125,23 @@ class DiffMOT():
             print(f"Epoch {epoch}/{self.config.epochs}")
             print(f"Train - Loss: {train_metrics['mean_loss']:.6f}, IoU: {train_metrics['mean_iou']:.6f}, ADE: {train_metrics['mean_ade']:.6f}")
             print(f"Val   - Loss: {val_metrics['mean_loss']:.6f}, IoU: {val_metrics['mean_iou']:.6f}, ADE: {val_metrics['mean_ade']:.6f}")
+            
+            # Early Stopping
+            if self.config.early_stopping == 'loss':
+                score = val_metrics['mean_loss']
+            elif self.config.early_stopping == 'iou':
+                score = val_metrics['mean_iou']
 
-            self.early_stopping(val_metrics['mean_loss'], self.model, epoch, self.optimizer, self.scheduler, self.model_dir, self.config.dataset)
+            self.early_stopping(score, self.model, epoch, self.optimizer, self.scheduler, self.model_dir, self.config.dataset)
             if self.early_stopping.early_stop:
                 print("Early stopping")
                 break
+
+
+            # self.early_stopping(val_metrics['mean_loss'], self.model, epoch, self.optimizer, self.scheduler, self.model_dir, self.config.dataset)
+            # if self.early_stopping.early_stop:
+            #     print("Early stopping")
+            #     break
 
     # def eval(self):
     #     det_root = self.config.det_dir
