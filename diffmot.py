@@ -248,15 +248,6 @@ class DiffMOT():
         self.model = model
         self.model.to(self.device)
 
-        self.model.half()
-
-
-        # # Enable Data Parallelism if using multiple GPUs
-        # if not self.config.eval_mode and len(self.config.gpus) > 1:
-        #     self.model = torch.nn.DataParallel(self.model, self.config.gpus).to(self.device)
-        # elif self.config.eval_mode:
-        #     self.model = self.model.to(self.device).eval()  # Set model to evaluation mode if in eval mode
-
         # if not self.config.eval_mode:
         #     self.model = torch.nn.DataParallel(self.model, self.config.gpus).to('cuda')
         # else:

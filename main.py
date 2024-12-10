@@ -38,11 +38,10 @@ def main():
     agent = DiffMOT(config)
     
 
-    with torch.amp.autocast("cuda"):  # Updated from torch.cuda.amp.autocast
-        if config.eval_mode:
-            agent.eval()
-        else:
-            agent.train()
+    if config.eval_mode:
+        agent.eval()
+    else:
+        agent.train()
 
 if __name__ == '__main__':
     main()
