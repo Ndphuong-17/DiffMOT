@@ -5,6 +5,7 @@ import math
 from .components import MLP, TransAoA, ReUnet3PlusDownBlock, ReUnet3PlusDownBlock_Smaller
 from .SimpleReUNet2Plus1 import SimpleReUNet2Plus as SimpleReUNet2Plus1
 from .SimpleReUNet2Plus2 import SimpleReUNet2Plus as SimpleReUNet2Plus2
+from .SimpleReUNet2Plus3 import SimpleReUNet2Plus as SimpleReUNet2Plus3
 
 class ReUNet(nn.Module):
   def __init__(self, noise_dim = 4, num_layers = 1, hidden_size = 256, filters = [16, 64, 128, 256], mid = True):
